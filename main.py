@@ -68,7 +68,7 @@ def nettoyage_description(description,description2,lieu):
 	return text.strip()
 
 def extract_credit_pdf():
-	input_files = glob.glob('input_pdf/*')
+	input_files = glob.glob('input_pdf/*.pdf')
 	input_files.sort()
 	for input_file in input_files:
 		print(input_file)
@@ -149,7 +149,7 @@ def extract_credit_pdf():
 
 def extract_credit_txt():
 	path = 'input_txt'
-	folders = glob.glob(path+'/*')
+	folders = glob.glob(path+'/*.txt')
 	folders.sort()
 	for folder in folders:
 		year = folder.split('/')[-1]

@@ -28,3 +28,5 @@ il se peut qu'une erreur pop-up dise que Java JDK n'est pas installé.
 Pour remédier à ce problème il faut télécharger l'installateur ".dmg" de Java JDK sur le site d'Oracle ici [https://www.oracle.com/java/technologies/downloads/#license-lightbox]().
 Pour Mac avec CPU Intel il faut choisir *x64 DMG Installer*.
 Pour Mac avec CPU M1 il faut choisir *Arm 64 DMG Installer*, mais je n'ai pas testé ce dernier.
+
+
