@@ -37,7 +37,10 @@ import numpy as np
 import pandas as pd
 import glob
 import tabula # librarie de scraping de tables dans un fichier PDF
+from tabula.io import read_pdf
 import re # pour trouver la date du relevé dans le PDF
+import PyPDF2
+import chardet
 
 pd.set_option('display.max_rows', 1000)
 pd.set_option('display.max_columns', 10)
@@ -73,79 +76,103 @@ def extract_credit_pdf():
 	for input_file in input_files:
 		print(input_file)
 		# Premièrement on cherche la date du relevé dans le pdf
-		tables = tabula.read_pdf(input_file, pages = '1', area = (0, 0, 1000, 1000), columns = [0], pandas_options={'header': None}, stream=True)
-		table  = tables[0]
-		text  = ' '.join(list(table[1]))
-		regex = 'DATE DU RELEVÉ Jour [0-9][0-9] Mois [0-9][0-9] Année [0-9][0-9][0-9][0-9]'
-		match_object = re.search(regex,text)
-		match_string = match_object[0]
-		DD   = match_string.split(' ')[4]
-		MM   = match_string.split(' ')[6]
-		YYYY = match_string.split(' ')[8]
-		YYYY_MM = YYYY+'-'+MM
-		YYYY_MM_DD = YYYY_MM+'-'+DD
-		print(YYYY_MM)
-		# Ensuite on fait le scraping du PDF pour trouver les transactions
-		tables = tabula.read_pdf(input_file,pages="all")
-		tables_utiles = []
-		for df in tables:
-			columns = list(df.columns)
-			if 'Transactions effectuées avec la carte de : ' in columns[0]:
-				tables_utiles.append(df)
-		n=len(tables_utiles)
-		print('Nombre de tables utiles :',n)
-		df_out = pd.DataFrame()
-		i=1
-		for df in tables_utiles:
-			print('Table numéro :',str(i)+'/'+str(n))
-			i+=1
-			df = df.copy()
-			# À partir du 2021-05 il n'y a plus de numéro de transaction mais il y a les boni points
-			if pd.to_datetime(YYYY_MM)<pd.to_datetime('2021-05'):
-				df.columns = ['Description','Description 2','Lieu','Montant']
-			else:
-				if df.shape[1]==4:
-					df.columns = ['Description','Description 2','Bonidollars','Montant']
-					df['Lieu'] = ''
-					df = df[['Description','Description 2','Lieu','Montant']]
-				elif df.shape[1]==3:
-					df.columns = ['Description','Bonidollars','Montant']
-					df['Description 2'] = ''
-					df['Lieu'] = ''
-					df = df[['Description','Description 2','Lieu','Montant']] # ici Description 2 peut contenir le lieu, mais ça marche pareil avec le reste du script plus bas
+		with open(input_file, 'rb') as file:
+			# Create a PDF reader object using PdfFileReader
+			pdf_reader = PyPDF2.PdfFileReader(file)
+
+			# Get the first page
+			first_page = pdf_reader.getPage(0)
+
+			# Extract text from the first page
+			text = first_page.extractText()
+
+			# Use chardet to detect the encoding
+			result = chardet.detect(text.encode('utf-8'))
+
+			# Get the detected encoding
+			encoding = result['encoding']
+
+			# Print the encoding
+			print(f"PDF Encoding: {encoding}")
+
+			# Use this encoding information to read the PDF with tabula
+			#tables = tabula.read_pdf(input_file, encoding=encoding)
+
+			# Now you can work with the DataFrame (df) extracted from the PDF
+			tables = tabula.read_pdf(input_file, pages = '1', area = (0, 0, 1000, 1000), columns = [0], pandas_options={'header': None}, stream=True)
+			table  = tables[0]
+			text  = ' '.join(list(table[1]))
+			regex = 'DATE DU RELEVÉ Jour [0-9][0-9] Mois [0-9][0-9] Année [0-9][0-9][0-9][0-9]'
+			match_object = re.search(regex,text)
+			match_string = match_object[0]
+			DD   = match_string.split(' ')[4]
+			MM   = match_string.split(' ')[6]
+			YYYY = match_string.split(' ')[8]
+			YYYY_MM = YYYY+'-'+MM
+			YYYY_MM_DD = YYYY_MM+'-'+DD
+			print(YYYY_MM)
+			# Ensuite on fait le scraping du PDF pour trouver les transactions
+			tables = tabula.read_pdf(input_file,pages="all")
+			tables_utiles = []
+			for df in tables:
+				columns = list(df.columns)
+				if 'Transactions effectuées avec la carte de : ' in columns[0]:
+					tables_utiles.append(df)
+			n=len(tables_utiles)
+			print('Nombre de tables utiles :',n)
+			df_out = pd.DataFrame(columns=['Numéro de transaction','Date de transaction',"Date d'inscription",'Description','Montant'])
+			i=1
+			for df in tables_utiles:
+				print('Table numéro :',str(i)+'/'+str(n))
+				i+=1
+				df = df.copy()
+				# À partir du 2021-05 il n'y a plus de numéro de transaction mais il y a les boni points
+				if pd.to_datetime(YYYY_MM)<pd.to_datetime('2021-05'):
+					df.columns = ['Description','Description 2','Lieu','Montant']
 				else:
-					print('Problème')
-					quit()
-			df = df.loc[3:]
-			df['Description']   = df['Description'].fillna('').astype(str)
-			df['Description 2'] = df['Description 2'].fillna('').astype(str)
-			df['Lieu']          = df['Lieu'].fillna('').astype(str)
-			df['Description']   = df[['Description','Description 2','Lieu']].apply(lambda x:nettoyage_description(x[0],x[1],x[2]),axis=1)
-			df['Montant'] = df['Montant'].apply(lambda x:nettoyage_montant(x)).astype(float)
-			df = df[['Description','Montant']]
-			df = df[df['Description']!='Total'] # on drop la ligne Total à la fin si elle est présente
-			df = df[df['Description']!='TOTAL'] # on drop la ligne TOTAL à la fin si elle est présente
-			df = df[df['Montant'].notna()]
-			df = df[df['Description']!='']
-			df['Date de transaction'] = df['Description'].apply(lambda x:YYYY+'-'+'-'.join(x.split(' ')[0:2][::-1]))
-			df["Date d'inscription"] = df['Description'].apply(lambda x:YYYY+'-'+'-'.join(x.split(' ')[2:4][::-1]))
-			print(df)
-			if pd.to_datetime(YYYY_MM)<pd.to_datetime('2021-05'):
-				df['Numéro de transaction'] = df['Description'].apply(lambda x:x.split(' ')[4])
-				df['Description'] = df['Description'].apply(lambda x:' '.join(x.split(' ')[5:]).strip())
-			else:
-				df['Numéro de transaction'] = ''
-				df['Description'] = df['Description'].apply(lambda x:' '.join(x.split(' ')[4:]).strip())					
-			df.reset_index(inplace=True,drop=True)
-			df = df[['Numéro de transaction','Date de transaction',"Date d'inscription",'Description','Montant']]
-			df_out = df_out.append(df)
-		df_out.reset_index(inplace=True,drop=True)
-		if pd.to_datetime(YYYY_MM)>=pd.to_datetime('2021-05'):
-			m = len(df_out)
-			df_out['Numéro de transaction'] = [f'{n+1:03}' for n in range(len(df_out))]
-		print('\nTable :\n',df_out,sep='')
-		output_file = 'output_csv/'+YYYY_MM+'.csv'
-		df_out.to_csv(output_file,index=False)
+					if df.shape[1]==4:
+						df.columns = ['Description','Description 2','Bonidollars','Montant']
+						df['Lieu'] = ''
+						df = df[['Description','Description 2','Lieu','Montant']]
+					elif df.shape[1]==3:
+						df.columns = ['Description','Bonidollars','Montant']
+						df['Description 2'] = ''
+						df['Lieu'] = ''
+						df = df[['Description','Description 2','Lieu','Montant']] # ici Description 2 peut contenir le lieu, mais ça marche pareil avec le reste du script plus bas
+						print(df)
+					else:
+						print('Problème')
+						continue
+				df = df.loc[3:]
+				df['Description']   = df['Description'].fillna('').astype(str)
+				df['Description 2'] = df['Description 2'].fillna('').astype(str)
+				df['Lieu']          = df['Lieu'].fillna('').astype(str)
+				df['Description']   = df[['Description','Description 2','Lieu']].apply(lambda x:nettoyage_description(x[0],x[1],x[2]),axis=1)
+				df['Montant'] = df['Montant'].apply(lambda x:nettoyage_montant(x)).astype(float)
+				df = df[['Description','Montant']]
+				df = df[df['Description']!='Total'] # on drop la ligne Total à la fin si elle est présente
+				df = df[df['Description']!='TOTAL'] # on drop la ligne TOTAL à la fin si elle est présente
+				df = df[df['Montant'].notna()]
+				df = df[df['Description']!='']
+				df['Date de transaction'] = df['Description'].apply(lambda x:YYYY+'-'+'-'.join(x.split(' ')[0:2][::-1]))
+				df["Date d'inscription"] = df['Description'].apply(lambda x:YYYY+'-'+'-'.join(x.split(' ')[2:4][::-1]))
+				print(df)
+				if pd.to_datetime(YYYY_MM)<pd.to_datetime('2021-05'):
+					df['Numéro de transaction'] = df['Description'].apply(lambda x:x.split(' ')[4])
+					df['Description'] = df['Description'].apply(lambda x:' '.join(x.split(' ')[5:]).strip())
+				else:
+					df['Numéro de transaction'] = ''
+					df['Description'] = df['Description'].apply(lambda x:' '.join(x.split(' ')[4:]).strip())					
+				df.reset_index(inplace=True,drop=True)
+				df = df[['Numéro de transaction','Date de transaction',"Date d'inscription",'Description','Montant']]
+				df_out = pd.concat([df_out, df], ignore_index=True)
+			df_out.reset_index(inplace=True,drop=True)
+			if pd.to_datetime(YYYY_MM)>=pd.to_datetime('2021-05'):
+				m = len(df_out)
+				df_out['Numéro de transaction'] = [f'{n+1:03}' for n in range(len(df_out))]
+			print('\nTable :\n',df_out,sep='')
+			output_file = 'output_csv/'+YYYY_MM+'.csv'
+			df_out.to_csv(output_file,index=False)
 
 def extract_credit_txt():
 	path = 'input_txt'
@@ -159,7 +186,7 @@ def extract_credit_txt():
 			month = file[-8:-6]
 			year_month=year+'-'+month
 			print(year_month)
-			#print(file)
+			print(file)
 			txt = open(file,'r')
 			start=0
 			colonnes = ["Date de transaction",
